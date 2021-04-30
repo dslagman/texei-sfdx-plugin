@@ -2,6 +2,7 @@ import { flags, SfdxCommand } from '@salesforce/command';
 import { Messages, SfdxError, Connection } from '@salesforce/core';
 import { AnyJson } from '@salesforce/ts-types';
 import { ExecuteOptions } from 'jsforce';
+import * as Base64 from 'crypto-js/enc-base64';
 import * as fs from 'fs';
 import * as path from 'path';
 const util = require("util");
@@ -11,8 +12,16 @@ interface DataPlan {
   label: string;
   filters: string;
   excludedFields: Array<string>;
+  includeRelatedFiles: boolean;
 }
 
+class DataPlanImpl implements DataPlan {
+  name: string;
+  label: string;
+  filters: string;
+  excludedFields: Array<string>;
+  includeRelatedFiles: boolean;
+}
 // Initialize Messages with the current plugin directory
 Messages.importMessagesDirectory(__dirname);
 
@@ -47,6 +56,7 @@ export default class Export extends SfdxCommand {
 
   // Set this to true if your command requires a project workspace; 'requiresProject' is false by default
   protected static requiresProject = false;
+  protected documentLinkedEntityIds = new Array<String>();;
 
   public async run(): Promise<AnyJson> {
 
@@ -93,6 +103,28 @@ export default class Export extends SfdxCommand {
       this.ux.stopSpinner(`${fileName} saved.`);
     }
 
+    if (this.documentLinkedEntityIds.length > 0) {
+      this.ux.startSpinner(`Exporting Content Version Files`, null, { stdout: true });
+
+      let relatedFiles = await this.getRelatedDocuments(recordIdsMap);
+      const documents:any = {};
+      documents.records = relatedFiles.documents;
+
+      const links:any = {};
+      links.records = relatedFiles.links;
+
+      let contentDocumentFileName = `${index}-ContentVersion.json`;
+
+      await this.saveFile(documents, contentDocumentFileName);
+      index++;
+
+      let contentDocumentLinkFileName = `${index}-ContentDocumentLink.json`;
+      await this.saveFile(links, contentDocumentLinkFileName);
+
+      index++;
+      this.ux.stopSpinner(`${contentDocumentFileName} and  ${contentDocumentLinkFileName} saved.`);
+    }
+
     return { message: 'Data exported' };
   }
 
@@ -120,7 +152,7 @@ export default class Export extends SfdxCommand {
     for (const field of describeResult.fields) {
 
       if (field.createable && !fieldsToExclude.includes(field.name)) {
-        
+
         fields.push(field.name);
         // If it's a lookup, also add it to the lookup list, to be replaced later
         // Excluding OwnerId as we are not importing users anyway
@@ -141,7 +173,7 @@ export default class Export extends SfdxCommand {
     if (describeResult.recordTypeInfos.length > 1) {
 
       // Looks like that there is always at least 1 RT (Master) returned by the describe
-      // So having more than 2 means there are some custom RT created 
+      // So having more than 2 means there are some custom RT created
       // Is there a better way to do this ?
       fields.push('RecordType.DeveloperName');
     }
@@ -163,10 +195,56 @@ export default class Export extends SfdxCommand {
     }
     const recordResults = (await conn.autoFetchQuery(recordQuery, options)).records;
 
+    if (sobject.includeRelatedFiles) {
+      for (let record of recordResults) {
+        this.documentLinkedEntityIds.push('\'' + record.Id + '\'');
+      }
+    }
+
     // Replace Lookup Ids + Record Type Ids by references
     await this.cleanJsonRecord(sobject, sObjectLabel, recordResults, recordIdsMap, lookups, userFieldsReference);
 
     return recordResults;
+  }
+
+  private async getRelatedDocuments(recordIdsMap) {
+
+    const documentLinks = (await conn.autoFetchQuery('SELECT Id, ContentDocumentId, LinkedEntityId ' +
+    'FROM ContentDocumentLink WHERE LinkedEntityId in (' + this.documentLinkedEntityIds.join(',') + ')')).records;
+
+    let documentIds = [];
+    let documentByIdMap = new Map();
+    for (let documentLink of documentLinks) {
+      documentByIdMap.set(documentLink.ContentDocumentId, documentLink);
+      documentIds.push('\'' + documentLink.ContentDocumentId + '\'');
+    }
+
+    const contentVersions = (await conn.autoFetchQuery('SELECT Id, VersionData, ContentDocumentId, PathOnClient, ContentLocation ' +
+      'FROM ContentVersion WHERE ContentDocumentId in (' + documentIds.join(',') + ')')).records;
+
+    for (let contentVersion of contentVersions) {
+      const contentVersionData = (await conn.tooling.request(contentVersion.VersionData));
+      contentVersion.VersionData = Base64.stringify(Base64.parse(contentVersionData));
+      documentByIdMap.get(contentVersion.ContentDocumentId)?.ContentDocumentId = contentVersion.Id;
+
+      delete contentVersion.ContentDocumentId;
+    }
+
+    const describeResult = await conn.sobject("ContentVersion").describe();
+    let plan = new DataPlanImpl();
+    plan.name = "ContentVersion";
+
+    const describeResult2 = await conn.sobject("ContentDocumentLink").describe();
+    let plan2 = new DataPlanImpl();
+    plan2.name = "ContentDocumentLink";
+
+    // Replace Lookup Ids + Record Type Ids by references
+    await this.cleanJsonRecord(plan, describeResult.label, contentVersions, recordIdsMap, [], []);
+
+    await this.cleanJsonRecord(plan2, describeResult2.label, documentByIdMap.values(), recordIdsMap, ['LinkedEntityId', 'ContentDocumentId'], []);
+
+
+    return { documents: contentVersions, links: Array.from(documentByIdMap.values()) };
   }
 
   // Clean JSON to have the same output format as force:data:tree:export
@@ -191,12 +269,12 @@ export default class Export extends SfdxCommand {
       else {
 
         // Add the new ReferenceId
-        if (sobject.name === 'Pricebook2' && record.IsStandard) { 
+        if (sobject.name === 'Pricebook2' && record.IsStandard) {
           // Specific use case for Standard Price Book that will need to be queried from target org
           // TODO: Maybe not even save this record
           const standardPriceBookLabel = 'StandardPriceBook';
           record.attributes.referenceId = standardPriceBookLabel;
-          recordIdsMap.set(record.Id, standardPriceBookLabel);    
+          recordIdsMap.set(record.Id, standardPriceBookLabel);
         }
         else {
           refId++;
@@ -249,7 +327,7 @@ export default class Export extends SfdxCommand {
         fileName
       );
     }
-    
+
     // Write product.json file
     const saveToPath = path.join(
       process.cwd(),

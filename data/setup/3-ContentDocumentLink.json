@@ -1,0 +1,20 @@
+{
+  "records": [
+    {
+      "attributes": {
+        "type": "ContentDocumentLink",
+        "referenceId": "ContentDocumentLinkRef1"
+      },
+      "ContentDocumentId": "ContentVersionRef2",
+      "LinkedEntityId": "WebProductRef12"
+    },
+    {
+      "attributes": {
+        "type": "ContentDocumentLink",
+        "referenceId": "ContentDocumentLinkRef2"
+      },
+      "ContentDocumentId": "ContentVersionRef1",
+      "LinkedEntityId": "WebProductRef14"
+    }
+  ]
+}

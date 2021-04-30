@@ -1,0 +1,12 @@
+{
+    "excludedFields": [],
+    "sObjects": [
+        {
+            "name": "welisacommerce__Web_Product__c",
+            "label": "",
+            "filters": "",
+            "excludedFields": [],
+            "includeRelatedFiles": true
+        }
+    ]
+}

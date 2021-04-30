@@ -73,7 +73,7 @@ export default class Import extends SfdxCommand {
     }).sort(function(a, b) {
       return a.substr(0, a.indexOf('-'))-b.substr(0, b.indexOf('-'))
     });
-    
+
     // Read and import data
     for (const dataFile of dataFiles) {
 
@@ -108,7 +108,7 @@ export default class Import extends SfdxCommand {
     if (sobjectName === 'PricebookEntry') {
       standardPriceBookId = ((await conn.query('Select Id from Pricebook2 where IsStandard = true')).records[0] as any).Id;
     }
-    
+
     // Replace data to import with newly generated Record Type Ids
     for (const sobject of jsonData) {
 
@@ -116,7 +116,7 @@ export default class Import extends SfdxCommand {
       for (const lookup of lookups) {
         if (sobject[lookup] && !(sobjectName === 'PricebookEntry' && sobject.Pricebook2Id === 'StandardPriceBook' && lookup === 'Pricebook2Id')) {
           sobject[lookup] = recordIdsMap.get(sobject[lookup]);
-        }   
+        }
       }
 
       // Replace Record Types, if any
@@ -137,7 +137,7 @@ export default class Import extends SfdxCommand {
   }
 
   private async upsertData(records: Array<any>, sobjectName: string) {
-    
+
     let sobjectsResult:Array<RecordResult> = new Array<RecordResult>();
 
     // So far, a whole file will be either inserted or updated
@@ -147,9 +147,9 @@ export default class Import extends SfdxCommand {
 
       // @ts-ignore: Don't know why, but TypeScript doesn't use the correct method override
       sobjectsResult = await conn.sobject(sobjectName).update(records, { allowRecursive: true, allOrNone: this.flags.allornone })
-                                                      .catch(err => {
-                                                        throw new SfdxError(`Error importing records: ${err}`);
-                                                      });
+        .catch(err => {
+          throw new SfdxError(`Error importing records: ${err}`);
+        });
     }
     else {
       // No Id, insert
@@ -160,11 +160,18 @@ export default class Import extends SfdxCommand {
                                                       .catch(err => {
                                                         throw new SfdxError(`Error importing records: ${err}`);
                                                       });
+
+
+        if (sobjectName == 'ContentVersion') {
+          
+          console.log(sobjectsResult);
+          //for (let contentVersion : sObjectsResult.)
+        }
     }
 
     // Some errors are part of RecordResult but don't throw an exception
     for (let i = 0; i < sobjectsResult.length; i++) {
-      
+
       if (!sobjectsResult[i].success) {
         const res:ErrorResult = sobjectsResult[i] as ErrorResult;
         const errors:ErrorResultDetail = res.errors[0] as any;
@@ -174,7 +181,7 @@ export default class Import extends SfdxCommand {
         }
       }
     }
-    
+
     // Update the map of Refs/Ids
     this.updateMapIdRef(records, sobjectsResult, recordIdsMap);
   }
